@@ -1,7 +1,5 @@
 module dmm3
 
-using Infiltrator
-
 export simulate_dmm
 export simulate_dmm_1d
 export simulate_dmm_dynamic_K
@@ -55,7 +53,7 @@ function initialize_dmm_non(tsteps, N, n)
     Initialize DMMs for network of networks
     tsteps: scalar
     N: scalar, # of units in a network
-    K: n x 1 vector: for each network
+    theta: n x 1 vector: for each network
 
     return:
     s: N x N x t x n
@@ -113,17 +111,16 @@ function _update_neighbors!(neighbors, s)
     return neighbors
 end
 
-function f(x, theta; n=4)
-    return 1 .- exp.( -(theta ./ n) * x)
+function f(x_local, x_global, theta; n=4)
+    return 1 .- exp.( -((theta ./ n) .* x_local .+ (x_global./n)))
 end
 
-function update_s(s, neighbors, theta, x, C; p_s=0.88, p_ext=0.0001)
+function update_s(s, neighbors, theta, x, C; p_s=0.88, p_ext=0.01)
     """
     Update s
     s: N x N x n
     neighbors: N x N x n
-    K: 1 x n
-    g0: 1 x 1 float
+    theta: 1 x n
     x: 1 x n (view of x[t, :])
     C: Coupling matrix: n x n
 
@@ -146,15 +143,15 @@ function update_s(s, neighbors, theta, x, C; p_s=0.88, p_ext=0.0001)
     n_networks = size(C, 1)
     s_new = copy(s)
     
-    Threads.@threads for i in 1:n
+    for i in 1:n_networks
         i_neighbors = view(neighbors, :, :, i)
         i_s = view(s, :, :, i)
         i_s_new = view(s_new, :, :, i)
 
-        couplingterm = C * x
-        localterm = sum(i_neighbors) / 4 # 4 neighbors for each neuron
-        p1to0 = 1 - p_ext - p_s - f(localterm + couplingterm / n_networks, theta[i])
-        p0to1 = p_ext + f(localterm + couplingterm / n_networks, theta)
+        couplingterm = C[i, :]' * x
+        localterm = i_neighbors # 4 neighbors for each neuron
+        p1to0 = 1 .- p_ext .- p_s .- f(localterm, couplingterm ./ n_networks, theta[i])
+        p0to1 = p_ext .+ f(localterm, couplingterm ./ n_networks, theta[i])
         # Update 
         r = rand(N, N)
         i_s_new[(i_s .== 1) .&  (r .<= p1to0)] .= 0.0
@@ -165,13 +162,12 @@ function update_s(s, neighbors, theta, x, C; p_s=0.88, p_ext=0.0001)
     return s_new
 end
 
-function update_states(theta, s, x, neighbors, C)
+function update_states(theta, s, x, neighbors, C; p_s=0.88, p_ext=0.01)
     """
     Take states s[t], x[t], neighbors and return s[t+1], x[t+1] and updated neighbors
     N: # of elements in one side of each network
     n: # of networks
-    K: 1 x n
-    g0: 1 x 1 float
+    theta: 1 x n
     s: N x N x n (    enter a view of s here, view(s[:, :, t, :])    )
     x: n (    again, enter a view: view(x[t, :])   )
     neighbors: N x N x n
@@ -189,7 +185,7 @@ function update_states(theta, s, x, neighbors, C)
     for i in 1:n
         neighbors_new[:, :, i] .= _update_neighbors!(neighbors[:, :, i], s[:, :, i])
     end
-    s_new = update_s(s, neighbors_new, theta, x, C)
+    s_new = update_s(s, neighbors_new, theta, x, C; p_s=p_s, p_ext=p_ext)
     nsquared = N^2
 
     x = zeros(n)
@@ -202,26 +198,26 @@ function update_states(theta, s, x, neighbors, C)
     return s_new, x, neighbors_new
 end
 
-function simulate_dmm(theta, C, N, tsteps)
+function simulate_dmm(theta, C, N, tsteps; p_s=0.88, p_ext=0.01)
     n = size(C, 1)
     s, x, neighbors = initialize_dmm_non(tsteps, N, n)
 
     for t in 2:tsteps
-        s_new, x_new, neighbors = update_states(theta, s[:, :, t-1, :], x[t-1, :], neighbors, C)
+        s_new, x_new, neighbors = update_states(theta, s[:, :, t-1, :], x[t-1, :], neighbors, C; p_s=p_s, p_ext=p_ext)
         s[:, :, t, :] = s_new
         x[t, :] = x_new
     end
     return s, x
 end
 
-function simulate_dmm_1d(theta, N, tsteps)
-    s, x = simulate_dmm([theta], [0.0], N, tsteps)
+function simulate_dmm_1d(theta, N, tsteps; p_s=0.88, p_ext=0.01)
+    s, x = simulate_dmm([theta], [0.0], N, tsteps; p_s=p_s, p_ext=p_ext)
     return s, x
 end
 
 function simulate_dmm_dynamic_K(theta, C, N, tsteps)
     """
-    K is a matrix: t x n
+    theta is a matrix: t x n
     """
     n = size(C, 1)
     s, x, neighbors = initialize_dmm_non(tsteps, N, n)
