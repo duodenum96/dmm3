@@ -12,6 +12,7 @@ using Polynomials
 import Plots: palette
 using LaTeXStrings
 using Format
+using RollingFunctions
 ################################# Load data
 glasser_sc_path = raw"C:\Users\Duodenum\Desktop\brain_stuff\modeling_utilities\averageConnectivity_Fpt.mat"
 myelinpath = raw"C:\Users\duodenum\Desktop\brain_stuff\modeling_utilities\parcelMyelinationIndices.mat"
@@ -35,8 +36,8 @@ narea = length(idx)
 N = 100
 tsteps = Int(1e5)
 K = [0.825, 0.675, 0.882, 0.93, 0.85]
-K = (K / maximum(K)) * 0.095
-mu = 0.2
+K = (K / maximum(K)) * 0.08
+mu = 0.3
 C_scaled = (C ./ maximum(C)) .* mu .* (6 / 5) # 6 / 5: little hack to keep driving network out of normalization
 C_netw = cat(zeros(1, narea + 1), cat(zeros(narea, 1), C_scaled; dims=2); dims=1)
 
@@ -51,12 +52,13 @@ fhigh = 10
 fs = 1000
 
 dynamic_idx = 1 # third network
-K_outernetwork = 0.1
+K_outernetwork = 0.4
 K_netw = cat(K_outernetwork, K; dims=1)
 K_netw_t = repeat((ones(narea + 1) .* K_netw)', tsteps, 1)
 # Now we gotta finesse K_netw_t[:, 1]: The time series for the K of the outer network
 # Prescription: Alternate between 0.01, 0.05, 0.1, 0.05 between each 10 second
-theta_values_outer = [0.01, 0.05, 0.1, 0.05]
+# theta_values_outer = [0.01, 0.05, 0.1, 0.05]
+theta_values_outer = [0.075, 0.1, 0.11, 0.1]
 sample_10sec = fs * 10
 nwindow = tsteps ÷ sample_10sec
 sample_10sec_idx = zeros(Int, nwindow, 2)
@@ -73,7 +75,7 @@ for i in 1:nwindow
     end
 end
 
-C_outernetwork = 0.1
+C_outernetwork = 0.3
 C_netw[2, 1] = C_outernetwork
 
 all_x = []
@@ -98,6 +100,7 @@ end
 f = Figure()
 ax = Axis(f[1, 1])
 [lines!(ax, all_x[1][1001:end, i]) for i in 1:6]
+f
 
 m_ple = mean(all_ples; dims=2)
 sd_ple = std(all_ples; dims=2)
@@ -106,20 +109,40 @@ sd_m_x = std(all_ms; dims=2)
 m_sd_x = mean(all_sds; dims=2)
 sd_sd_x = std(all_sds; dims=2)
 # Sliding window PLE calculation
-windowsize = 1000
-overlap = 0.5
+windowsize = 10000
+n = length(all_x[1][1001:end, 1])
+overlap = 0.99
+nwindow = Int( (n - windowsize) ÷ ((1 - overlap) * windowsize) + 1 )
 ples_dynamic = zeros(narea + 1, nwindow, nsim)
-nwindow = tsteps ÷ windowsize - 1
 for i in 1:nsim
     x_selected = all_x[i][1001:end, :]
     for j in 1:6
         ples_dynamic[j, :, i] = ple_slidingwindow_overlap(
-            x_selected[:, j]; flow=flow, fhigh=fhigh, windowsize=1000, overlap=0.5, fs=fs
+            x_selected[:, j];
+            flow=flow,
+            fhigh=fhigh,
+            windowsize=windowsize,
+            overlap=overlap,
+            fs=fs,
         )
         println("j = $(j)")
     end
     println("i = $(i)")
-end 
+end
+
+sm_ples_dynamic = zeros(narea + 1, 881, nsim)
+for i in 1:nsim
+    for j in 1:6
+        sm_ples_dynamic[j, :, i] = rolling(mean, ples_dynamic[j, :, i], 10)
+    end
+end
+
+println([cor(ples_dynamic[1, :, i], ples_dynamic[2, :, i]) for i in 1:nsim])
+println([cor(sm_ples_dynamic[1, :, i], sm_ples_dynamic[4, :, i]) for i in 1:nsim])
+f = Figure()
+ax = Axis(f[1, 1])
+[lines!(ax, sm_ples_dynamic[i, :, 1]) for i in [1,3]]
+f
 
 jldsave(
     "data\\f2\\glasser_coupled.jld2";
