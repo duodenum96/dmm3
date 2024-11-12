@@ -2,12 +2,13 @@ module dmm3
 
 export simulate_dmm
 export simulate_dmm_1d
-export simulate_dmm_dynamic_K
+export simulate_dmm_dynamic_theta
 export prepare_dynamic_K
 
 include("src_dsp.jl")
 export calc_ple
 export ple_slidingwindow
+export ple_slidingwindow_overlap
 
 include("analysis_helpers.jl")
 export calculate_stuff
@@ -215,7 +216,7 @@ function simulate_dmm_1d(theta, N, tsteps; p_s=0.88, p_ext=0.01)
     return s, x
 end
 
-function simulate_dmm_dynamic_K(theta, C, N, tsteps)
+function simulate_dmm_dynamic_theta(theta, C, N, tsteps; p_s=0.88, p_ext=0.01)
     """
     theta is a matrix: t x n
     """
@@ -223,7 +224,7 @@ function simulate_dmm_dynamic_K(theta, C, N, tsteps)
     s, x, neighbors = initialize_dmm_non(tsteps, N, n)
 
     for t in 2:tsteps
-        s_new, x_new, neighbors = update_states(theta[t, :], s[:, :, t-1, :], x[t-1, :], neighbors, C)
+        s_new, x_new, neighbors = update_states(theta[t-1, :], s[:, :, t-1, :], x[t-1, :], neighbors, C; p_s=p_s, p_ext=p_ext)
         s[:, :, t, :] = s_new
         x[t, :] = x_new
     end
